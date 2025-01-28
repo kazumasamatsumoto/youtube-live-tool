@@ -1,0 +1,14 @@
+refresh_rate: 30 seconds
+
+appenders:
+  file:
+    kind: file
+    path: "log/camera.log"
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S)} [{l}] {m}{n}"
+    append: true
+
+root:
+  level: info
+  appenders:
+    - file

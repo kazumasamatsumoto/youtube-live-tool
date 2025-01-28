@@ -3,11 +3,45 @@ mod tabs;
 mod models;
 
 use app::main_window::MainWindow;
+use log::{info, LevelFilter};
+use log4rs::{
+    append::file::FileAppender,
+    config::{Appender, Config, Root},
+    encode::pattern::PatternEncoder,
+};
+use std::fs;
 use eframe::egui;
 use eframe::egui::ViewportBuilder;
 use std::default::Default;
 
+fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
+    // ログディレクトリの作成
+    fs::create_dir_all("log")?;
+
+    // ファイルアペンダーの設定
+    let logfile = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} [{l}] {m}{n}")))
+        .build("log/camera.log")?;
+
+    // ログ設定
+    let config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .build(Root::builder()
+            .appender("logfile")
+            .build(LevelFilter::Info))?;
+
+    // ログ設定の適用
+    log4rs::init_config(config)?;
+    
+    info!("ログシステムを初期化しました");
+    Ok(())
+}
+
 fn main() -> Result<(), eframe::Error> {
+    // ログシステムの初期化
+    if let Err(e) = init_logger() {
+        eprintln!("ログシステムの初期化に失敗しました: {}", e);
+    }
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([1280.0, 720.0])

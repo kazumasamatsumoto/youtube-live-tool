@@ -3,6 +3,7 @@ use nokhwa::utils::{CameraIndex, RequestedFormat, RequestedFormatType};
 use nokhwa::{Camera, NokhwaError};
 use image::RgbImage;
 use std::time::{Duration, Instant};
+use log::{info, error};
 
 #[derive(Default)]
 pub struct VideoConfig {
@@ -58,14 +59,14 @@ pub enum CaptureAreaType {
 
 impl CameraSettings {
     pub fn new(index: usize) -> Result<Self, NokhwaError> {
-        println!("[Camera] カメラの初期化開始 - インデックス: {}", index);
+        info!("[Camera] カメラの初期化開始 - インデックス: {}", index);
         let camera_index = CameraIndex::Index(index.try_into().unwrap());
         
         // カメラの初期化を試みる
         let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
-        println!("[Camera] カメラインスタンスの作成を試行");
+        info!("[Camera] カメラインスタンスの作成を試行");
         let mut camera = Camera::new(camera_index, requested)?;
-        println!("[Camera] カメラインスタンスの作成成功");
+        info!("[Camera] カメラインスタンスの作成成功");
         
         // フレームレートの設定を試みる（60FPSを目標に）
         let target_fps = 60.0;
@@ -77,20 +78,20 @@ impl CameraSettings {
                 .unwrap_or(60);
             
             let fps = f32::min(target_fps, max_fps as f32) as u32;
-            println!("[Camera] フレームレート設定 - 目標: {}, 最大: {}, 設定値: {}", target_fps, max_fps, fps);
+            info!("[Camera] フレームレート設定 - 目標: {}, 最大: {}, 設定値: {}", target_fps, max_fps, fps);
             if let Err(e) = camera.set_frame_rate(fps) {
-                println!("[Camera] フレームレート設定エラー: {}、デフォルト値を使用します", e);
+                error!("[Camera] フレームレート設定エラー: {}、デフォルト値を使用します", e);
             }
             Duration::from_secs_f32(1.0 / fps as f32)
         } else {
-            println!("[Camera] フレームレート情報の取得失敗 - デフォルト値(60FPS)を使用");
+            info!("[Camera] フレームレート情報の取得失敗 - デフォルト値(60FPS)を使用");
             Duration::from_micros(16667) // デフォルトで60FPS
         };
 
         // ストリームを開く
-        println!("[Camera] ストリームのオープンを試行");
+        info!("[Camera] ストリームのオープンを試行");
         camera.open_stream()?;
-        println!("[Camera] ストリームのオープン成功");
+        info!("[Camera] ストリームのオープン成功");
 
         Ok(CameraSettings {
             device_id: index.to_string(),
@@ -107,7 +108,7 @@ impl CameraSettings {
     }
 
     pub fn capture_frame(&mut self) -> Result<(), NokhwaError> {
-        println!("[Camera] フレーム取得開始 - カメラ: {}", self.name);
+        info!("[Camera] フレーム取得開始 - カメラ: {}", self.name);
         let camera = self.camera.as_mut().ok_or_else(|| {
             NokhwaError::GeneralError("カメラが初期化されていません".to_string())
         })?;
@@ -115,11 +116,11 @@ impl CameraSettings {
         // フレームレート制御
         let elapsed = self.last_frame_time.elapsed();
         if elapsed < self.frame_interval {
-            println!("[Camera] フレームレート制御 - 次のフレームまで待機 (経過: {:?}, 間隔: {:?})", elapsed, self.frame_interval);
+            info!("[Camera] フレームレート制御 - 次のフレームまで待機 (経過: {:?}, 間隔: {:?})", elapsed, self.frame_interval);
             return Ok(());
         }
 
-        println!("[Camera] フレーム取得処理開始 - 最大3回まで再試行");
+        info!("[Camera] フレーム取得処理開始 - 最大3回まで再試行");
         // フレームの取得（最大3回まで再試行）
         let mut retry_count = 0;
         let max_retries = 3;
@@ -127,10 +128,10 @@ impl CameraSettings {
         while retry_count < max_retries {
             match camera.frame() {
                 Ok(frame) => {
-                    println!("[Camera] フレーム取得成功 - 試行回数: {}", retry_count + 1);
+                    info!("[Camera] フレーム取得成功 - 試行回数: {}", retry_count + 1);
                     match frame.decode_image::<RgbFormat>() {
                         Ok(decoded) => {
-                            println!("[Camera] フレームデコード成功 - サイズ: {}x{}", decoded.width(), decoded.height());
+                            info!("[Camera] フレームデコード成功 - サイズ: {}x{}", decoded.width(), decoded.height());
                             let width = decoded.width();
                             let height = decoded.height();
                             let raw_data = decoded.into_raw();
@@ -138,58 +139,58 @@ impl CameraSettings {
                             // フレームバッファの再利用
                             if let Some(buffer) = &mut self.frame_buffer {
                                 if buffer.len() == raw_data.len() {
-                                    println!("[Camera] 既存バッファ再利用 - サイズ: {}", buffer.len());
+                                    info!("[Camera] 既存バッファ再利用 - サイズ: {}", buffer.len());
                                     buffer.copy_from_slice(&raw_data);
                                     if let Some(image) = RgbImage::from_raw(width, height, buffer.clone()) {
                                         self.frame = Some(image);
                                         self.last_frame_time = Instant::now();
-                                        println!("[Camera] フレーム更新完了 - バッファ再利用");
+                                        info!("[Camera] フレーム更新完了 - バッファ再利用");
                                         return Ok(());
                                     }
                                 }
                             }
                             
                             // 新しいバッファの作成
-                            println!("[Camera] 新規バッファ作成 - サイズ: {}", raw_data.len());
+                            info!("[Camera] 新規バッファ作成 - サイズ: {}", raw_data.len());
                             self.frame_buffer = Some(raw_data.clone());
                             if let Some(image) = RgbImage::from_raw(width, height, raw_data) {
                                 self.frame = Some(image);
                                 self.last_frame_time = Instant::now();
-                                println!("[Camera] フレーム更新完了 - 新規バッファ");
+                                info!("[Camera] フレーム更新完了 - 新規バッファ");
                                 return Ok(());
                             }
                             
-                            println!("[Camera] フレームデータの変換に失敗");
+                            error!("[Camera] フレームデータの変換に失敗");
                             return Err(NokhwaError::GeneralError("フレームデータの変換に失敗しました".to_string()));
                         }
                         Err(e) => {
-                            println!("[Camera] フレームのデコードエラー - 試行 {}/{}: {}", retry_count + 1, max_retries, e);
+                            error!("[Camera] フレームのデコードエラー - 試行 {}/{}: {}", retry_count + 1, max_retries, e);
                             retry_count += 1;
                             if retry_count == max_retries {
-                                println!("[Camera] デコードエラー - 最大試行回数到達");
+                                error!("[Camera] デコードエラー - 最大試行回数到達");
                                 return Err(e);
                             }
-                            println!("[Camera] 5ms待機後に再試行");
+                            info!("[Camera] 5ms待機後に再試行");
                             std::thread::sleep(Duration::from_millis(5));
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    println!("[Camera] フレームの取得エラー - 試行 {}/{}: {}", retry_count + 1, max_retries, e);
+                    error!("[Camera] フレームの取得エラー - 試行 {}/{}: {}", retry_count + 1, max_retries, e);
                     retry_count += 1;
                     if retry_count == max_retries {
-                        println!("[Camera] フレーム取得エラー - 最大試行回数到達");
+                        error!("[Camera] フレーム取得エラー - 最大試行回数到達");
                         return Err(e);
                     }
-                    println!("[Camera] 5ms待機後に再試行");
+                    info!("[Camera] 5ms待機後に再試行");
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 }
             }
         }
         
-        println!("[Camera] フレーム取得失敗 - 最大試行回数を超過");
+        error!("[Camera] フレーム取得失敗 - 最大試行回数を超過");
         Err(NokhwaError::GeneralError("フレーム取得の再試行回数を超過しました".to_string()))
     }
 }
@@ -199,7 +200,7 @@ impl VideoConfig {
         match nokhwa::query(nokhwa::utils::ApiBackend::Auto) {
             Ok(cameras) => cameras.into_iter().map(|info| info.human_name()).collect(),
             Err(e) => {
-                eprintln!("カメラの検出エラー: {}", e);
+                error!("カメラの検出エラー: {}", e);
                 Vec::new()
             }
         }

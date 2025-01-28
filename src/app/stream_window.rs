@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::models::{banner::BannerConfig, stream::StreamConfig};
+use log::info;
 
 pub struct StreamWindow {
     stream: StreamConfig,
@@ -21,6 +22,29 @@ impl Default for StreamWindow {
 
 impl eframe::App for StreamWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // マウスの状態を確認
+        ctx.input(|input| {
+            // マウスの位置
+            if let Some(pos) = input.pointer.hover_pos() {
+                info!("[Mouse] 位置: ({:.1}, {:.1})", pos.x, pos.y);
+            }
+
+            // マウスのフォーカス状態
+            if input.pointer.has_pointer() {
+                info!("[Mouse] ウィンドウ内");
+            } else {
+                info!("[Mouse] ウィンドウ外");
+            }
+
+            // クリックイベント
+            if input.pointer.primary_clicked() {
+                info!("[Mouse] 左クリック");
+            }
+            if input.pointer.secondary_clicked() {
+                info!("[Mouse] 右クリック");
+            }
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // メインレイアウト（垂直方向に分割）
             ui.vertical(|ui| {
