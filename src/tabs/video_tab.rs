@@ -1,6 +1,9 @@
 use eframe::egui;
-use crate::models::video::{CameraSettings, VideoConfig, ScreenCaptureSettings, CaptureAreaType};
-use nokhwa::NokhwaError;
+use crate::models::{
+    camera::CameraSettings,
+    video_config::VideoConfig,
+    screen_capture::CaptureAreaType
+};
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -99,42 +102,38 @@ impl VideoTab {
                         ui.add(egui::DragValue::new(&mut camera.size.0).speed(1.0).suffix("w"));
                         ui.add(egui::DragValue::new(&mut camera.size.1).speed(1.0).suffix("h"));
 
-                        // カメラフレームの取得と表示
-                        if let Err(e) = camera.capture_frame() {
-                            self.error_message = Some(format!("カメラエラー: {}", e));
-                            self.error_time = Some(Instant::now());
-                        }
-                        
                         // フレームの表示（テクスチャキャッシュを使用）
-                        if let Some(frame) = &camera.frame {
-                            let size = egui::vec2(camera.size.0, camera.size.1);
-                            let texture_id = format!("camera_{}", camera.device_id);
-                            
-                            // フレームレート制御 (16.6ms = 約60FPS)
-                            let now = Instant::now();
-                            if now.duration_since(self.last_frame_time).as_millis() >= 16 {
-                                let image = Arc::new(egui::ColorImage::from_rgb(
-                                    [frame.width() as usize, frame.height() as usize],
-                                    frame.as_raw()
-                                ));
+                        if let Ok(frame_lock) = camera.frame.lock() {
+                            if let Some(frame) = &*frame_lock {
+                                let size = egui::vec2(camera.size.0, camera.size.1);
+                                let texture_id = format!("camera_{}", camera.device_id);
                                 
-                                // テクスチャの更新または作成
-                                if let Some((texture, _)) = self.texture_cache.get_mut(&texture_id) {
-                                    texture.set(image, egui::TextureOptions::default());
-                                } else {
-                                    let texture = ui.ctx().load_texture(
-                                        &texture_id,
-                                        image,
-                                        egui::TextureOptions::default(),
-                                    );
-                                    self.texture_cache.insert(texture_id.clone(), (texture, now));
+                                // フレームレート制御 (16.6ms = 約60FPS)
+                                let now = Instant::now();
+                                if now.duration_since(self.last_frame_time).as_millis() >= 16 {
+                                    let image = Arc::new(egui::ColorImage::from_rgb(
+                                        [frame.width() as usize, frame.height() as usize],
+                                        frame.as_raw()
+                                    ));
+                                    
+                                    // テクスチャの更新または作成
+                                    if let Some((texture, _)) = self.texture_cache.get_mut(&texture_id) {
+                                        texture.set(image, egui::TextureOptions::default());
+                                    } else {
+                                        let texture = ui.ctx().load_texture(
+                                            &texture_id,
+                                            image,
+                                            egui::TextureOptions::default(),
+                                        );
+                                        self.texture_cache.insert(texture_id.clone(), (texture, now));
+                                    }
+                                    self.last_frame_time = now;
                                 }
-                                self.last_frame_time = now;
-                            }
-                            
-                            // キャッシュされたテクスチャを使用
-                            if let Some((texture, _)) = self.texture_cache.get(&texture_id) {
-                                ui.image((texture.id(), size));
+                                
+                                // キャッシュされたテクスチャを使用
+                                if let Some((texture, _)) = self.texture_cache.get(&texture_id) {
+                                    ui.image((texture.id(), size));
+                                }
                             }
                         }
                     }

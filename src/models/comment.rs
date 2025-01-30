@@ -1,11 +1,11 @@
-#[derive(Default)]
+#[allow(dead_code)]
 pub struct CommentConfig {
     pub filter: FilterSettings,
     pub voice: VoiceSettings,
     pub display: DisplaySettings,
 }
 
-#[derive(Default)]
+#[allow(dead_code)]
 pub struct FilterSettings {
     pub block_words: Vec<String>,
     pub min_account_age_days: u32,
@@ -13,7 +13,7 @@ pub struct FilterSettings {
     pub block_first_time: bool,
 }
 
-#[derive(Default)]
+#[allow(dead_code)]
 pub struct VoiceSettings {
     pub enabled: bool,
     pub voice_type: String,
@@ -22,7 +22,7 @@ pub struct VoiceSettings {
     pub volume: f32,
 }
 
-#[derive(Default)]
+#[allow(dead_code)]
 pub struct DisplaySettings {
     pub font_size: u32,
     pub display_time: u32,

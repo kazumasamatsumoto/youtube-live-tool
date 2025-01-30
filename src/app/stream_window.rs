@@ -2,6 +2,7 @@ use eframe::egui;
 use crate::models::{banner::BannerConfig, stream::StreamConfig};
 use log::info;
 
+#[allow(dead_code)]
 pub struct StreamWindow {
     stream: StreamConfig,
     comments: Vec<String>, // 一時的にStringに変更

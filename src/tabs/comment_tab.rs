@@ -1,6 +1,7 @@
 use eframe::egui;
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct CommentTab {
     pub filter_settings: CommentFilter,
     pub voice_settings: VoiceSettings,
@@ -8,6 +9,7 @@ pub struct CommentTab {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct CommentFilter {
     pub block_words: Vec<String>,
     pub min_account_age_days: u32,
@@ -16,6 +18,7 @@ pub struct CommentFilter {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct VoiceSettings {
     pub enabled: bool,
     pub voice_type: String,
@@ -25,6 +28,7 @@ pub struct VoiceSettings {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct CommentDisplaySettings {
     pub font_size: u32,
     pub display_time: u32,
@@ -34,6 +38,7 @@ pub struct CommentDisplaySettings {
 }
 
 impl CommentTab {
+    #[allow(dead_code)]
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("コメント設定");
 

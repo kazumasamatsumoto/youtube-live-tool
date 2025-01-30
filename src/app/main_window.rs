@@ -7,6 +7,7 @@ pub struct MainWindow {
     audio_tab: AudioTab,
     video_tab: VideoTab,
     banner_tab: BannerTab,
+    #[allow(dead_code)]
     comment_tab: CommentTab,
     status_tab: StatusTab,
     show_exit_confirmation: bool,
@@ -41,6 +42,9 @@ pub enum Tab {
 
 impl eframe::App for MainWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 継続的な更新を要求
+        ctx.request_repaint();
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(8.0);  // 左マージン

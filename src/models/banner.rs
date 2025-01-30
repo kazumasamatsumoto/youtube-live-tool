@@ -1,10 +1,12 @@
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct BannerConfig {
     pub banners: Vec<BannerSettings>,
     pub default_duration: u32,
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct BannerSettings {
     pub text: String,
     pub enabled: bool,
@@ -13,7 +15,8 @@ pub struct BannerSettings {
     pub position: BannerPosition,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default)]
+#[allow(dead_code)]
 pub enum BannerPosition {
     #[default]
     Top,

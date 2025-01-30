@@ -46,7 +46,13 @@ fn main() -> Result<(), eframe::Error> {
         viewport: ViewportBuilder::default()
             .with_inner_size([1280.0, 720.0])
             .with_min_inner_size([800.0, 600.0])
-            .with_title("YouTube Live 配信ツール"),
+            .with_title("YouTube Live 配信ツール")
+            .with_active(true)  // アクティブ状態を維持
+            .with_always_on_top(),
+        renderer: eframe::Renderer::default(),
+        follow_system_theme: false,
+        centered: true,
+        persist_window: true,  // ウィンドウの状態を維持
         ..Default::default()
     };
 
