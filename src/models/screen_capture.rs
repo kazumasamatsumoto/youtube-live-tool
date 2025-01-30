@@ -7,9 +7,10 @@ use log::error;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Dxgi::*;
-use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 use windows::core::ComInterface;
 use parking_lot::RwLock;
+use wgpu; // GPUアクセラレーションのために追加
+use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;  // 追加
 
 #[derive(Default)]
 pub struct ScreenCaptureSettings {
@@ -31,21 +32,85 @@ pub struct ScreenCapture {
     frame: Arc<RwLock<Option<RgbImage>>>,
     running: Arc<AtomicBool>,
     capture_thread: Option<thread::JoinHandle<()>>,
+    // GPU処理用の新しいフィールド
+    wgpu_device: Option<wgpu::Device>,
+    wgpu_queue: Option<wgpu::Queue>,
+    compute_pipeline: Option<wgpu::ComputePipeline>,
+}
+
+// GPUバッファとバインドグループを保持する構造体を追加
+struct GpuResources {
+    input_buffer: wgpu::Buffer,
+    output_buffer: wgpu::Buffer,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
 }
 
 impl ScreenCapture {
     pub fn new() -> Self {
+        // GPUデバイスの初期化
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+            flags: wgpu::InstanceFlags::default(),
+            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })).unwrap();
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+            },
+            None,
+        )).unwrap();
+
         Self {
             frame: Arc::new(RwLock::new(None)),
             running: Arc::new(AtomicBool::new(false)),
             capture_thread: None,
+            wgpu_device: Some(device),
+            wgpu_queue: Some(queue),
+            compute_pipeline: None,
         }
+    }
+
+    fn create_compute_pipeline(&mut self) {
+        let device = self.wgpu_device.as_ref().unwrap();
+        
+        // コンピュートシェーダーの作成
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("../shaders/downscale.wgsl"))),
+        });
+
+        // パイプラインの作成
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &shader,
+            entry_point: "main",
+        });
+
+        self.compute_pipeline = Some(pipeline);
     }
 
     pub fn start(&mut self) {
         if self.capture_thread.is_none() {
+            self.create_compute_pipeline();
+            
             let frame = Arc::clone(&self.frame);
             let running = Arc::clone(&self.running);
+            // wgpuの型はCloneを実装していないので、参照を使用
+            let device = self.wgpu_device.as_ref().unwrap();
+            let queue = self.wgpu_queue.as_ref().unwrap();
+            let pipeline = self.compute_pipeline.as_ref().unwrap();
 
             running.store(true, Ordering::SeqCst);
 
@@ -106,116 +171,44 @@ impl ScreenCapture {
 
                     let mut last_fps_check = Instant::now();
                     let mut frame_count = 0;
-                    let mut buffer = Vec::with_capacity(1280 * 720 * 4); // 720pに変更
-                    let mut staging = None;
 
                     while running.load(Ordering::Relaxed) {
                         let mut frame_resource = None;
                         let mut frame_info = Default::default();
 
-                        match duplication.AcquireNextFrame(
-                            16,  // 16msは約60FPSを想定
-                            &mut frame_info,
-                            &mut frame_resource,
-                        ) {
+                        match duplication.AcquireNextFrame(8, &mut frame_info, &mut frame_resource) {
                             Ok(()) => {
                                 if let Some(resource) = frame_resource {
                                     let texture: ID3D11Texture2D = resource.cast().unwrap();
-                                    let mut desc = D3D11_TEXTURE2D_DESC::default();
-                                    texture.GetDesc(&mut desc);
-
-                                    // 中間バッファを作成して解像度変換を行う
-                                    if staging.is_none() {
-                                        // 元のサイズ用のステージングテクスチャ
-                                        let staging_desc = D3D11_TEXTURE2D_DESC {
-                                            Width: desc.Width,
-                                            Height: desc.Height,
-                                            MipLevels: 1,
-                                            ArraySize: 1,
-                                            Format: desc.Format,
-                                            SampleDesc: DXGI_SAMPLE_DESC {
-                                                Count: 1,
-                                                Quality: 0,
-                                            },
-                                            Usage: D3D11_USAGE_STAGING,  // STAGINGに変更
-                                            BindFlags: D3D11_BIND_FLAG(0),
-                                            CPUAccessFlags: D3D11_CPU_ACCESS_READ,
-                                            MiscFlags: D3D11_RESOURCE_MISC_FLAG(0),
-                                        };
-
-                                        device.CreateTexture2D(&staging_desc, None, Some(&mut staging))
-                                            .expect("Failed to create staging texture");
-                                    }
-
-                                    // フレームのコピー
-                                    device_context.CopyResource(
-                                        staging.as_ref().unwrap(),
+                                    
+                                    // フレームを処理
+                                    let mut staging_texture = None;
+                                    let result = ScreenCapture::process_frame_gpu(
                                         &texture,
+                                        &device_context,
+                                        &mut staging_texture
                                     );
 
-                                    // データの読み取り
-                                    let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                                    device_context.Map(
-                                        staging.as_ref().unwrap(),
-                                        0,
-                                        D3D11_MAP_READ,
-                                        0,
-                                        Some(&mut mapped),
-                                    ).unwrap();
-
-                                    // バッファサイズを720pに合わせる
-                                    buffer.clear();
-                                    buffer.reserve(1280 * 720 * 3);
-
-                                    // スケーリングを行いながらデータを読み取り
-                                    let src_width = desc.Width as usize;
-                                    let src_height = desc.Height as usize;
-                                    let scale_x = src_width as f32 / 1280.0;
-                                    let scale_y = src_height as f32 / 720.0;
-
-                                    for y in 0..720 {
-                                        for x in 0..1280 {
-                                            let src_x = (x as f32 * scale_x) as usize;
-                                            let src_y = (y as f32 * scale_y) as usize;
-                                            let src_offset = src_y * mapped.RowPitch as usize + src_x * 4;
-                                            
-                                            let src_pixel = std::slice::from_raw_parts(
-                                                (mapped.pData as *const u8).add(src_offset),
-                                                4,
-                                            );
-                                            
-                                            buffer.extend_from_slice(&[src_pixel[2], src_pixel[1], src_pixel[0]]);
-                                        }
-                                    }
-
-                                    device_context.Unmap(staging.as_ref().unwrap(), 0);
-
-                                    // フレームをImageBufferとして保存
-                                    if let Some(rgb_image) = RgbImage::from_raw(
-                                        1280,  // 720p固定
-                                        720,
-                                        buffer.clone(),
-                                    ) {
+                                    if let Some(frame_image) = result {
                                         let mut frame_lock = frame.write();
-                                        *frame_lock = Some(rgb_image);
+                                        *frame_lock = Some(frame_image);
                                     }
 
                                     duplication.ReleaseFrame().unwrap();
-                                    
-                                    // FPS計測
-                                    frame_count += 1;
-                                    if last_fps_check.elapsed() >= Duration::from_secs(1) {
-                                        println!("FPS: {}", frame_count);
-                                        frame_count = 0;
-                                        last_fps_check = Instant::now();
-                                    }
+                                }
+
+                                frame_count += 1;
+                                if last_fps_check.elapsed() >= Duration::from_secs(1) {
+                                    println!("FPS: {}", frame_count);
+                                    frame_count = 0;
+                                    last_fps_check = Instant::now();
                                 }
                             }
                             Err(e) => {
                                 if e.code() != DXGI_ERROR_WAIT_TIMEOUT {
                                     error!("Failed to acquire frame: {:?}", e);
                                 }
-                                thread::sleep(Duration::from_micros(100));
+                                thread::sleep(Duration::from_micros(50));
                             }
                         }
                     }
@@ -235,6 +228,175 @@ impl ScreenCapture {
 
     pub fn get_frame(&self) -> Option<RgbImage> {
         self.frame.read().clone()
+    }
+
+    fn create_gpu_resources(&self, device: &wgpu::Device, input_size: (u32, u32)) -> GpuResources {
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Uniform Buffer"),
+            size: std::mem::size_of::<[u32; 6]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let input_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Input Buffer"),
+            size: (input_size.0 * input_size.1 * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Output Buffer"),
+            size: (1280 * 720 * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        GpuResources {
+            input_buffer,
+            output_buffer,
+            uniform_buffer,
+            bind_group,
+        }
+    }
+
+    // process_frame_gpuをスタティック関数に変更
+    unsafe fn process_frame_gpu(
+        texture: &ID3D11Texture2D,
+        device_context: &ID3D11DeviceContext,
+        staging_texture: &mut Option<ID3D11Texture2D>,
+    ) -> Option<RgbImage> {
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        texture.GetDesc(&mut desc);
+
+        // ステージングテクスチャの作成
+        if staging_texture.is_none() {
+            let staging_desc = D3D11_TEXTURE2D_DESC {
+                Width: desc.Width,
+                Height: desc.Height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: desc.Format,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: D3D11_BIND_FLAG(0),
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ,
+                MiscFlags: D3D11_RESOURCE_MISC_FLAG(0),
+            };
+
+            let d3d_device = device_context.GetDevice().unwrap();
+            let mut new_texture = None;
+            d3d_device.CreateTexture2D(&staging_desc, None, Some(&mut new_texture)).unwrap();
+            *staging_texture = new_texture;
+        }
+
+        // テクスチャをコピー
+        if let Some(staging) = staging_texture.as_ref() {
+            device_context.CopyResource(staging, texture);
+
+            // マッピングしてデータを読み取り
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            device_context.Map(
+                staging,
+                0,
+                D3D11_MAP_READ,
+                0,
+                Some(&mut mapped),
+            ).unwrap();
+
+            // バッファにデータをコピー
+            let mut buffer = Vec::with_capacity(1280 * 720 * 3);
+            let src_width = desc.Width as usize;
+            let src_height = desc.Height as usize;
+            let scale_x = src_width as f32 / 1280.0;
+            let scale_y = src_height as f32 / 720.0;
+
+            for y in 0..720 {
+                let src_y = (y as f32 * scale_y) as usize;
+                let row_offset = src_y * mapped.RowPitch as usize;
+
+                for x in 0..1280 {
+                    let src_x = (x as f32 * scale_x) as usize;
+                    let src_offset = row_offset + src_x * 4;
+
+                    let src_pixel = std::slice::from_raw_parts(
+                        (mapped.pData as *const u8).add(src_offset),
+                        4,
+                    );
+
+                    buffer.extend_from_slice(&[
+                        src_pixel[2], // R
+                        src_pixel[1], // G
+                        src_pixel[0], // B
+                    ]);
+                }
+            }
+
+            device_context.Unmap(staging, 0);
+
+            // RGBイメージを作成
+            RgbImage::from_raw(1280, 720, buffer)
+        } else {
+            None
+        }
     }
 }
 

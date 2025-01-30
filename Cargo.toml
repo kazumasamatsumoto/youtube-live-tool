@@ -23,3 +23,5 @@ windows = { version = "0.48", features = [
     "Win32_System_Threading"
 ]}
 parking_lot = "0.12"
+wgpu = { version = "0.19.1", features = ["dx12"] }
+pollster = "0.3"
