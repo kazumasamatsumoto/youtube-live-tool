@@ -123,17 +123,28 @@ impl StatusTab {
                                             [frame.width() as usize, frame.height() as usize],
                                             frame.as_raw(),
                                         ),
-                                        Default::default(),
+                                        egui::TextureOptions {
+                                            magnification: egui::TextureFilter::Linear,
+                                            minification: egui::TextureFilter::Linear,
+                                            ..Default::default()
+                                        },
                                     )
                                 });
 
-                                texture.set(
-                                    egui::ColorImage::from_rgb(
-                                        [frame.width() as usize, frame.height() as usize],
-                                        frame.as_raw(),
-                                    ),
-                                    Default::default(),
-                                );
+                                // フレームバッファの更新を最適化
+                                if frame.width() > 0 && frame.height() > 0 {
+                                    texture.set(
+                                        egui::ColorImage::from_rgb(
+                                            [frame.width() as usize, frame.height() as usize],
+                                            frame.as_raw(),
+                                        ),
+                                        egui::TextureOptions {
+                                            magnification: egui::TextureFilter::Linear,
+                                            minification: egui::TextureFilter::Linear,
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
 
                                 ui.painter().image(
                                     texture.id(),

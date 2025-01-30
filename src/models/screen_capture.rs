@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
 use image::RgbImage;
@@ -9,6 +9,7 @@ use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 use windows::core::ComInterface;
+use parking_lot::RwLock;
 
 #[derive(Default)]
 pub struct ScreenCaptureSettings {
@@ -27,7 +28,7 @@ pub enum CaptureAreaType {
 }
 
 pub struct ScreenCapture {
-    frame: Arc<Mutex<Option<RgbImage>>>,
+    frame: Arc<RwLock<Option<RgbImage>>>,
     running: Arc<AtomicBool>,
     capture_thread: Option<thread::JoinHandle<()>>,
 }
@@ -35,7 +36,7 @@ pub struct ScreenCapture {
 impl ScreenCapture {
     pub fn new() -> Self {
         Self {
-            frame: Arc::new(Mutex::new(None)),
+            frame: Arc::new(RwLock::new(None)),
             running: Arc::new(AtomicBool::new(false)),
             capture_thread: None,
         }
@@ -105,15 +106,15 @@ impl ScreenCapture {
 
                     let mut last_fps_check = Instant::now();
                     let mut frame_count = 0;
-                    let mut buffer = Vec::with_capacity(2304 * 1536 * 4);
-                    let mut staging = None;  // ステージングテクスチャを再利用
+                    let mut buffer = Vec::with_capacity(1280 * 720 * 4); // 720pに変更
+                    let mut staging = None;
 
                     while running.load(Ordering::Relaxed) {
                         let mut frame_resource = None;
                         let mut frame_info = Default::default();
 
                         match duplication.AcquireNextFrame(
-                            33,  // 33msは約30FPSを想定
+                            16,  // 16msは約60FPSを想定
                             &mut frame_info,
                             &mut frame_resource,
                         ) {
@@ -123,8 +124,9 @@ impl ScreenCapture {
                                     let mut desc = D3D11_TEXTURE2D_DESC::default();
                                     texture.GetDesc(&mut desc);
 
-                                    // ステージングテクスチャの作成または再利用
+                                    // 中間バッファを作成して解像度変換を行う
                                     if staging.is_none() {
+                                        // 元のサイズ用のステージングテクスチャ
                                         let staging_desc = D3D11_TEXTURE2D_DESC {
                                             Width: desc.Width,
                                             Height: desc.Height,
@@ -135,23 +137,14 @@ impl ScreenCapture {
                                                 Count: 1,
                                                 Quality: 0,
                                             },
-                                            Usage: D3D11_USAGE_STAGING,
+                                            Usage: D3D11_USAGE_STAGING,  // STAGINGに変更
                                             BindFlags: D3D11_BIND_FLAG(0),
                                             CPUAccessFlags: D3D11_CPU_ACCESS_READ,
                                             MiscFlags: D3D11_RESOURCE_MISC_FLAG(0),
                                         };
 
-                                        match device.CreateTexture2D(
-                                            &staging_desc,
-                                            None,
-                                            Some(&mut staging),
-                                        ) {
-                                            Ok(()) => (),
-                                            Err(e) => {
-                                                error!("ステージングテクスチャの作成に失敗: {:?}", e);
-                                                continue;
-                                            }
-                                        };
+                                        device.CreateTexture2D(&staging_desc, None, Some(&mut staging))
+                                            .expect("Failed to create staging texture");
                                     }
 
                                     // フレームのコピー
@@ -170,34 +163,28 @@ impl ScreenCapture {
                                         Some(&mut mapped),
                                     ).unwrap();
 
-                                    let row_pitch = mapped.RowPitch as usize;
-                                    let width = desc.Width as usize;
-                                    let height = desc.Height as usize;
-
+                                    // バッファサイズを720pに合わせる
                                     buffer.clear();
-                                    buffer.reserve(width * height * 3);
-                                    
-                                    // SIMD的なアプローチで一度に複数ピクセルを処理
-                                    for y in 0..height {
-                                        let row = std::slice::from_raw_parts(
-                                            (mapped.pData as *const u8).add(y * row_pitch),
-                                            width * 4,
-                                        );
-                                        
-                                        let chunks = row.chunks_exact(8);
-                                        let remainder = chunks.remainder();
-                                        
-                                        for chunk in chunks {
-                                            buffer.extend_from_slice(&[
-                                                chunk[2], chunk[1], chunk[0],  // 1つ目のピクセル
-                                                chunk[6], chunk[5], chunk[4],  // 2つ目のピクセル
-                                            ]);
-                                        }
-                                        
-                                        if !remainder.is_empty() {
-                                            buffer.extend_from_slice(&[
-                                                remainder[2], remainder[1], remainder[0]
-                                            ]);
+                                    buffer.reserve(1280 * 720 * 3);
+
+                                    // スケーリングを行いながらデータを読み取り
+                                    let src_width = desc.Width as usize;
+                                    let src_height = desc.Height as usize;
+                                    let scale_x = src_width as f32 / 1280.0;
+                                    let scale_y = src_height as f32 / 720.0;
+
+                                    for y in 0..720 {
+                                        for x in 0..1280 {
+                                            let src_x = (x as f32 * scale_x) as usize;
+                                            let src_y = (y as f32 * scale_y) as usize;
+                                            let src_offset = src_y * mapped.RowPitch as usize + src_x * 4;
+                                            
+                                            let src_pixel = std::slice::from_raw_parts(
+                                                (mapped.pData as *const u8).add(src_offset),
+                                                4,
+                                            );
+                                            
+                                            buffer.extend_from_slice(&[src_pixel[2], src_pixel[1], src_pixel[0]]);
                                         }
                                     }
 
@@ -205,29 +192,22 @@ impl ScreenCapture {
 
                                     // フレームをImageBufferとして保存
                                     if let Some(rgb_image) = RgbImage::from_raw(
-                                        width as u32,
-                                        height as u32,
+                                        1280,  // 720p固定
+                                        720,
                                         buffer.clone(),
                                     ) {
-                                        if let Ok(mut frame_guard) = frame.lock() {
-                                            *frame_guard = Some(rgb_image);
-                                        }
+                                        let mut frame_lock = frame.write();
+                                        *frame_lock = Some(rgb_image);
                                     }
 
                                     duplication.ReleaseFrame().unwrap();
-                                }
-
-                                // フレームレート制御
-                                frame_count += 1;
-                                if last_fps_check.elapsed() >= Duration::from_secs(1) {
-                                    println!("FPS: {}", frame_count);
-                                    frame_count = 0;
-                                    last_fps_check = Instant::now();
-                                } else {
-                                    // フレーム間の適切な待機時間を設定
-                                    let target_frame_time = Duration::from_millis(33);
-                                    if let Some(sleep_time) = target_frame_time.checked_sub(last_fps_check.elapsed()) {
-                                        thread::sleep(sleep_time);
+                                    
+                                    // FPS計測
+                                    frame_count += 1;
+                                    if last_fps_check.elapsed() >= Duration::from_secs(1) {
+                                        println!("FPS: {}", frame_count);
+                                        frame_count = 0;
+                                        last_fps_check = Instant::now();
                                     }
                                 }
                             }
@@ -236,7 +216,6 @@ impl ScreenCapture {
                                     error!("Failed to acquire frame: {:?}", e);
                                 }
                                 thread::sleep(Duration::from_micros(100));
-                                continue;
                             }
                         }
                     }
@@ -255,7 +234,7 @@ impl ScreenCapture {
     }
 
     pub fn get_frame(&self) -> Option<RgbImage> {
-        self.frame.lock().ok()?.clone()
+        self.frame.read().clone()
     }
 }
 
