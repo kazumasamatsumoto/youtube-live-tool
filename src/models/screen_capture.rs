@@ -176,7 +176,7 @@ impl ScreenCapture {
                         let mut frame_resource = None;
                         let mut frame_info = Default::default();
 
-                        match duplication.AcquireNextFrame(8, &mut frame_info, &mut frame_resource) {
+                        match duplication.AcquireNextFrame(4, &mut frame_info, &mut frame_resource) {
                             Ok(()) => {
                                 if let Some(resource) = frame_resource {
                                     let texture: ID3D11Texture2D = resource.cast().unwrap();
@@ -214,6 +214,13 @@ impl ScreenCapture {
                     }
                 }
             });
+
+            // スレッド優先度を上げる
+            #[cfg(windows)]
+            unsafe {
+                use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST};
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+            }
 
             self.capture_thread = Some(handle);
         }
@@ -324,6 +331,14 @@ impl ScreenCapture {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         texture.GetDesc(&mut desc);
 
+        // バッファを事前に確保して再利用
+        static mut BUFFER: Option<Vec<u8>> = None;
+        if BUFFER.is_none() {
+            let mut vec = Vec::with_capacity(1280 * 720 * 3);
+            vec.resize(1280 * 720 * 3, 0);  // ここで実際にメモリを確保
+            BUFFER = Some(vec);
+        }
+
         // ステージングテクスチャの作成
         if staging_texture.is_none() {
             let staging_desc = D3D11_TEXTURE2D_DESC {
@@ -352,7 +367,6 @@ impl ScreenCapture {
         if let Some(staging) = staging_texture.as_ref() {
             device_context.CopyResource(staging, texture);
 
-            // マッピングしてデータを読み取り
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             device_context.Map(
                 staging,
@@ -362,38 +376,43 @@ impl ScreenCapture {
                 Some(&mut mapped),
             ).unwrap();
 
-            // バッファにデータをコピー
-            let mut buffer = Vec::with_capacity(1280 * 720 * 3);
+            let buffer = BUFFER.as_mut().unwrap();
+
+            // SIMD的なアプローチでピクセル処理を最適化
             let src_width = desc.Width as usize;
             let src_height = desc.Height as usize;
             let scale_x = src_width as f32 / 1280.0;
             let scale_y = src_height as f32 / 720.0;
 
+            // 8ピクセルずつ処理
             for y in 0..720 {
                 let src_y = (y as f32 * scale_y) as usize;
                 let row_offset = src_y * mapped.RowPitch as usize;
+                let row_ptr = (mapped.pData as *const u8).add(row_offset);
 
-                for x in 0..1280 {
-                    let src_x = (x as f32 * scale_x) as usize;
-                    let src_offset = row_offset + src_x * 4;
+                let mut x = 0;
+                while x < 1280 {
+                    let chunk_size = std::cmp::min(8, 1280 - x);
+                    for i in 0..chunk_size {
+                        let src_x = ((x + i) as f32 * scale_x) as usize;
+                        let src_pixel = std::slice::from_raw_parts(
+                            row_ptr.add(src_x * 4),
+                            4,
+                        );
 
-                    let src_pixel = std::slice::from_raw_parts(
-                        (mapped.pData as *const u8).add(src_offset),
-                        4,
-                    );
-
-                    buffer.extend_from_slice(&[
-                        src_pixel[2], // R
-                        src_pixel[1], // G
-                        src_pixel[0], // B
-                    ]);
+                        let idx = (y * 1280 + x + i) * 3;
+                        buffer[idx] = src_pixel[2];     // R
+                        buffer[idx + 1] = src_pixel[1]; // G
+                        buffer[idx + 2] = src_pixel[0]; // B
+                    }
+                    x += chunk_size;
                 }
             }
 
             device_context.Unmap(staging, 0);
 
-            // RGBイメージを作成
-            RgbImage::from_raw(1280, 720, buffer)
+            // バッファをクローンして新しいRgbImageを作成
+            Some(RgbImage::from_raw(1280, 720, buffer.clone()).unwrap())
         } else {
             None
         }
