@@ -2,7 +2,6 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
-use image::RgbImage;
 use log::{info, error};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Direct3D::*;
@@ -104,33 +103,31 @@ impl ScreenCapture {
                         }
                     };
 
-                    let frame_duration = Duration::from_micros(8333); // 120 FPS
+                    let frame_duration = Duration::from_micros(16667); // 60 FPS
                     let mut last_frame_time = Instant::now();
-                    
-                    // FPS計測用の変数を追加
-                    let mut fps_counter = 0;
+                    let mut frame_count = 0;
                     let mut fps_timer = Instant::now();
 
                     while running.load(Ordering::Relaxed) {
                         let now = Instant::now();
                         let elapsed = now.duration_since(last_frame_time);
-                        
-                        // フレームスキップを許可して、処理が追いつかない場合は次のフレームに進む
+
+                        // より精密なフレーム同期
                         if elapsed < frame_duration {
                             let sleep_time = frame_duration - elapsed;
-                            if sleep_time > Duration::from_micros(500) {
-                                thread::sleep(sleep_time - Duration::from_micros(500));
+                            if sleep_time > Duration::from_micros(100) {
+                                thread::sleep(sleep_time - Duration::from_micros(100));
+                                thread::yield_now();
                             }
-                            thread::yield_now();
                             continue;
                         }
-                        
+
                         last_frame_time = now;
 
                         let mut frame_resource = None;
                         let mut frame_info = Default::default();
 
-                        // フレーム取得のタイムアウトを短く設定
+                        // フレーム取得とFPS計測
                         match duplication.AcquireNextFrame(0, &mut frame_info, &mut frame_resource) {
                             Ok(()) => {
                                 info!("フレーム取得: OK");
@@ -162,6 +159,12 @@ impl ScreenCapture {
 
                                     duplication.ReleaseFrame().unwrap();
                                 }
+                                frame_count += 1;
+                                if fps_timer.elapsed() >= Duration::from_secs(1) {
+                                    info!("FPS: {}", frame_count);
+                                    frame_count = 0;
+                                    fps_timer = Instant::now();
+                                }
                             }
                             Err(e) => {
                                 if e.code() != DXGI_ERROR_WAIT_TIMEOUT {
@@ -170,31 +173,16 @@ impl ScreenCapture {
                                 continue;
                             }
                         }
-
-                        // FPSの計測と出力
-                        fps_counter += 1;
-                        if fps_timer.elapsed() >= Duration::from_secs(1) {
-                            println!("現在のFPS: {}", fps_counter);
-                            fps_counter = 0;
-                            fps_timer = Instant::now();
-                        }
                     }
                 }
             });
 
-            // スレッド優先度とアフィニティを最適化
+            // スレッド優先度をさらに最適化
             #[cfg(windows)]
             unsafe {
-                use windows::Win32::System::Threading::{
-                    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
-                    SetThreadAffinityMask, SetProcessPriorityBoost, GetCurrentProcess
-                };
-                // プロセスの優先度ブーストを無効化して安定性を向上
-                SetProcessPriorityBoost(GetCurrentProcess(), false);
-                // スレッド優先度を最高に設定
-                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-                // 最初のCPUコアに固定（他のコアとの競合を防ぐ）
-                SetThreadAffinityMask(GetCurrentThread(), 0b1);
+                use windows::Win32::System::Threading::*;
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+                SetThreadAffinityMask(GetCurrentThread(), 0b1);  // 最初のコアに固定
             }
 
             self.capture_thread = Some(handle);
@@ -217,7 +205,7 @@ impl ScreenCapture {
         texture: &ID3D11Texture2D,
         device_context: &ID3D11DeviceContext,
         staging_texture: &mut Option<ID3D11Texture2D>,
-    ) -> Option<(Vec<u8>, u32, u32)> {  // サイズ情報も一緒に返す
+    ) -> Option<(Vec<u8>, u32, u32)> {
         let process_start = Instant::now();
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         texture.GetDesc(&mut desc);
@@ -285,7 +273,7 @@ impl ScreenCapture {
         device_context.Unmap(staging, 0);
         info!("全体の処理時間: {:?}", process_start.elapsed());
         
-        Some((bgra_data, desc.Width, desc.Height))  // サイズ情報も返す
+        Some((bgra_data, desc.Width, desc.Height))
     }
 }
 
