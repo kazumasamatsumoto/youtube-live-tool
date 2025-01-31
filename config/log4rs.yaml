@@ -1,14 +1,27 @@
 refresh_rate: 30 seconds
 
 appenders:
-  file:
-    kind: file
-    path: "log/camera.log"
+  stdout:
+    kind: console
     encoder:
       pattern: "{d(%Y-%m-%d %H:%M:%S)} [{l}] {m}{n}"
-    append: true
+
+  file:
+    kind: file
+    path: "log/app.log"
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S)} [{l}] {m}{n}"
 
 root:
   level: info
   appenders:
+    - stdout
     - file
+
+loggers:
+  youtube_live_tool::app::stream_window:
+    level: info
+    appenders:
+      - stdout
+      - file
+    additive: false

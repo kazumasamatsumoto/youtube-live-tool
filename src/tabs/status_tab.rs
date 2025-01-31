@@ -115,43 +115,56 @@ impl StatusTab {
                     if self.is_screen_sharing {
                         // 画面共有の表示
                         if let Some(screen_capture) = &mut self.screen_capture {
-                            if let Some(frame) = screen_capture.get_frame() {
-                                let texture = self.screen_texture.get_or_insert_with(|| {
-                                    ui.ctx().load_texture(
-                                        "screen-preview",
-                                        egui::ColorImage::from_rgb(
-                                            [frame.width() as usize, frame.height() as usize],
-                                            frame.as_raw(),
-                                        ),
-                                        egui::TextureOptions {
-                                            magnification: egui::TextureFilter::Linear,
-                                            minification: egui::TextureFilter::Linear,
-                                            ..Default::default()
-                                        },
-                                    )
-                                });
+                            match screen_capture.get_frame() {
+                                Some((frame_data, width, height)) => {
+                                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                        [width as usize, height as usize],
+                                        &frame_data
+                                    );
 
-                                // フレームバッファの更新を最適化
-                                if frame.width() > 0 && frame.height() > 0 {
-                                    texture.set(
-                                        egui::ColorImage::from_rgb(
-                                            [frame.width() as usize, frame.height() as usize],
-                                            frame.as_raw(),
-                                        ),
-                                        egui::TextureOptions {
-                                            magnification: egui::TextureFilter::Linear,
-                                            minification: egui::TextureFilter::Linear,
-                                            ..Default::default()
-                                        },
+                                    let texture = self.screen_texture.get_or_insert_with(|| {
+                                        ui.ctx().load_texture(
+                                            "screen-preview",
+                                            color_image.clone(),
+                                            egui::TextureOptions::default()
+                                        )
+                                    });
+
+                                    texture.set(color_image, egui::TextureOptions::default());
+
+                                    if width > 0 && height > 0 {
+                                        let aspect_ratio = width as f32 / height as f32;
+                                        let preview_size = if preview_width / preview_height > aspect_ratio {
+                                            egui::vec2(preview_height * aspect_ratio, preview_height)
+                                        } else {
+                                            egui::vec2(preview_width, preview_width / aspect_ratio)
+                                        };
+
+                                        ui.painter().image(
+                                            texture.id(),
+                                            preview_rect,
+                                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                            egui::Color32::WHITE,
+                                        );
+                                    }
+                                }
+                                None => {
+                                    // エラー表示のコード
+                                    ui.painter().rect_filled(
+                                        preview_rect,
+                                        4.0,
+                                        egui::Color32::from_rgb(40, 40, 40)
+                                    );
+                                    let text = "No Signal";
+                                    let text_color = egui::Color32::from_rgb(200, 200, 200);
+                                    ui.painter().text(
+                                        preview_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        text,
+                                        egui::FontId::proportional(20.0),
+                                        text_color,
                                     );
                                 }
-
-                                ui.painter().image(
-                                    texture.id(),
-                                    preview_rect,
-                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    egui::Color32::WHITE,
-                                );
                             }
                         }
                     } else {
