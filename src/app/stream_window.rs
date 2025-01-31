@@ -1,6 +1,8 @@
 use eframe::egui;
 use crate::models::screen_capture::ScreenCapture;
-use egui::ColorImage;
+use egui::{ColorImage, TextureOptions};
+use std::time::Instant;
+use log::info;
 
 pub struct StreamWindow {
     banner_text: String,
@@ -23,48 +25,48 @@ impl Default for StreamWindow {
 
 impl eframe::App for StreamWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let update_start = Instant::now();
+        
         egui::CentralPanel::default().show(ctx, |ui| {
-            // メインレイアウト（垂直方向に分割）
             ui.vertical(|ui| {
-                // 上部エリア（配信画面とコメント - 横方向に4:1で分割）
                 ui.horizontal(|ui| {
-                    // 配信画面エリア（4/5のスペース）
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width() * 0.8, ui.available_height() * 0.9),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            // フレームの取得状態をログ出力
+                            // フレーム取得時間を計測
+                            let frame_fetch_start = Instant::now();
                             match self.screen_capture.get_frame() {
-                                Some(frame_image) => {
-                                    let (width, height) = frame_image.dimensions();
-                                    let pixels: Vec<u8> = frame_image.into_raw();
-                                    let size = [width as usize, height as usize];
-                                    let expected_size = size[0] * size[1] * 3; // RGB各1バイト                                    
-                                    if pixels.len() != expected_size {
-                                        println!("ピクセルデータのサイズが不正: {} != {}", pixels.len(), expected_size);
-                                        return;
-                                    }
-                                    let color_image = ColorImage::from_rgb(size, pixels.as_slice());
+                                Some((frame_data, width, height)) => {
+                                    info!("フレーム取得時間: {:?}", frame_fetch_start.elapsed());
+                                    
+                                    // BGRAデータから直接ColorImageを作成
+                                    let color_image = ColorImage::from_rgba_unmultiplied(
+                                        [width as usize, height as usize],
+                                        &frame_data  // BGRAデータをそのまま使用
+                                    );
+
                                     let texture = self.texture_handle.get_or_insert_with(|| {
-                                        ui.ctx().load_texture(
+                                        ctx.load_texture(
                                             "screen-capture",
                                             color_image.clone(),
-                                            egui::TextureOptions::default()
+                                            TextureOptions::default()
                                         )
                                     });
-                                    texture.set(
-                                        color_image,
-                                        egui::TextureOptions::default()
-                                    );
-                                    // アスペクト比を維持しながら表示
+
+                                    texture.set(color_image, TextureOptions::default());
+                                    
+                                    // 描画時間を計測
+                                    let draw_start = Instant::now();
                                     let available_size = ui.available_size();
-                                    let aspect_ratio = size[0] as f32 / size[1] as f32;
+                                    let aspect_ratio = width as f32 / height as f32;
                                     let display_size = if available_size.x / available_size.y > aspect_ratio {
                                         egui::vec2(available_size.y * aspect_ratio, available_size.y)
                                     } else {
                                         egui::vec2(available_size.x, available_size.x / aspect_ratio)
                                     };
                                     ui.image((texture.id(), display_size));
+                                    info!("描画時間: {:?}", draw_start.elapsed());
                                 }
                                 None => {
                                     let frame = egui::Frame::none()
@@ -127,5 +129,6 @@ impl eframe::App for StreamWindow {
                 });
             });
         });
+        info!("全体の更新時間: {:?}", update_start.elapsed());
     }
 }

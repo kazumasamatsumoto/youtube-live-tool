@@ -13,6 +13,7 @@ use std::fs;
 use eframe::egui;
 use eframe::egui::ViewportBuilder;
 use std::default::Default;
+use log4rs;
 
 fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
     // ログディレクトリの作成
@@ -38,10 +39,11 @@ fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), eframe::Error> {
-    // ログシステムの初期化
-    if let Err(e) = init_logger() {
-        eprintln!("ログシステムの初期化に失敗しました: {}", e);
+    // 一つのログ設定だけを使用
+    if let Err(e) = log4rs::init_file("config/log4rs.yaml", Default::default()) {
+        eprintln!("ログ設定の初期化に失敗しました: {}", e);
     }
+
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([1280.0, 720.0])
