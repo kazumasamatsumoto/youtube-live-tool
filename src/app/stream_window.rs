@@ -1,51 +1,28 @@
 use eframe::egui;
-use crate::models::{banner::BannerConfig, stream::StreamConfig};
-use log::info;
+use crate::models::screen_capture::ScreenCapture;
+use egui::ColorImage;
 
-#[allow(dead_code)]
 pub struct StreamWindow {
-    stream: StreamConfig,
-    comments: Vec<String>, // 一時的にStringに変更
-    banner: BannerConfig,
     banner_text: String,
+    screen_capture: ScreenCapture,
+    texture_handle: Option<egui::TextureHandle>,
 }
 
 impl Default for StreamWindow {
     fn default() -> Self {
+        let mut screen_capture = ScreenCapture::new();
+        screen_capture.start();
+        
         Self {
-            stream: StreamConfig::default(),
-            comments: Vec::new(),
-            banner: BannerConfig::default(),
             banner_text: "Welcome to the stream!".to_string(),
+            screen_capture,
+            texture_handle: None,
         }
     }
 }
 
 impl eframe::App for StreamWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // マウスの状態を確認
-        ctx.input(|input| {
-            // マウスの位置
-            if let Some(pos) = input.pointer.hover_pos() {
-                info!("[Mouse] 位置: ({:.1}, {:.1})", pos.x, pos.y);
-            }
-
-            // マウスのフォーカス状態
-            if input.pointer.has_pointer() {
-                info!("[Mouse] ウィンドウ内");
-            } else {
-                info!("[Mouse] ウィンドウ外");
-            }
-
-            // クリックイベント
-            if input.pointer.primary_clicked() {
-                info!("[Mouse] 左クリック");
-            }
-            if input.pointer.secondary_clicked() {
-                info!("[Mouse] 右クリック");
-            }
-        });
-
         egui::CentralPanel::default().show(ctx, |ui| {
             // メインレイアウト（垂直方向に分割）
             ui.vertical(|ui| {
@@ -56,13 +33,49 @@ impl eframe::App for StreamWindow {
                         egui::vec2(ui.available_width() * 0.8, ui.available_height() * 0.9),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            let frame = egui::Frame::none()
-                                .fill(egui::Color32::from_rgb(40, 40, 40));
-                            frame.show(ui, |ui| {
-                                ui.centered_and_justified(|ui| {
-                                    ui.label("配信画面");
-                                });
-                            });
+                            // フレームの取得状態をログ出力
+                            match self.screen_capture.get_frame() {
+                                Some(frame_image) => {
+                                    let (width, height) = frame_image.dimensions();
+                                    let pixels: Vec<u8> = frame_image.into_raw();
+                                    let size = [width as usize, height as usize];
+                                    let expected_size = size[0] * size[1] * 3; // RGB各1バイト                                    
+                                    if pixels.len() != expected_size {
+                                        println!("ピクセルデータのサイズが不正: {} != {}", pixels.len(), expected_size);
+                                        return;
+                                    }
+                                    let color_image = ColorImage::from_rgb(size, pixels.as_slice());
+                                    let texture = self.texture_handle.get_or_insert_with(|| {
+                                        ui.ctx().load_texture(
+                                            "screen-capture",
+                                            color_image.clone(),
+                                            egui::TextureOptions::default()
+                                        )
+                                    });
+                                    texture.set(
+                                        color_image,
+                                        egui::TextureOptions::default()
+                                    );
+                                    // アスペクト比を維持しながら表示
+                                    let available_size = ui.available_size();
+                                    let aspect_ratio = size[0] as f32 / size[1] as f32;
+                                    let display_size = if available_size.x / available_size.y > aspect_ratio {
+                                        egui::vec2(available_size.y * aspect_ratio, available_size.y)
+                                    } else {
+                                        egui::vec2(available_size.x, available_size.x / aspect_ratio)
+                                    };
+                                    ui.image((texture.id(), display_size));
+                                }
+                                None => {
+                                    let frame = egui::Frame::none()
+                                        .fill(egui::Color32::from_rgb(40, 40, 40));
+                                    frame.show(ui, |ui| {
+                                        ui.centered_and_justified(|ui| {
+                                            ui.label("画面キャプチャを待機中...");
+                                        });
+                                    });
+                                }
+                            }
                         },
                     );
 
