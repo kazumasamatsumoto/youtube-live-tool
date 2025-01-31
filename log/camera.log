@@ -89,3 +89,21 @@ The underlying API or device in use does not support enough features to be a ful
     limits: DownlevelLimits,
     shader_model: Sm5,
 }
+2025-01-31 13:36:19 [INFO] ログシステムを初期化しました
+2025-01-31 13:36:22 [WARN] Unable to find extension: VK_EXT_swapchain_colorspace
+2025-01-31 13:36:22 [WARN] InstanceFlags::VALIDATION requested, but unable to find layer: VK_LAYER_KHRONOS_validation
+2025-01-31 13:36:22 [INFO] Debug utils not enabled: debug_utils_user_data not passed to Instance::from_raw
+2025-01-31 13:36:22 [WARN] Unable to enable D3D12 debug interface: 0x887A002D
+2025-01-31 13:36:22 [WARN] Unable to enable DXGI debug interface: 0x887A002D
+2025-01-31 13:36:22 [WARN] Adapter is not Vulkan compliant, hiding adapter: Microsoft Direct3D12 (Qualcomm(R) Adreno(TM) X1-85 GPU)
+2025-01-31 13:36:22 [WARN] Adapter is not Vulkan compliant, hiding adapter: Microsoft Direct3D12 (Microsoft Basic Render Driver)
+2025-01-31 13:36:22 [INFO] Adapter Vulkan AdapterInfo { name: "Qualcomm(R) Adreno(TM) X1-85 GPU", vendor: 20803, device: 1124404225, device_type: IntegratedGpu, driver: "Qualcomm Technologies Inc. Adreno Vulkan Driver", driver_info: "Driver Build: , , 1661514817\nDate: 08/26/2022\nCompiler Version: E031.46.14.00\nDriver Branch: \n", backend: Vulkan }
+2025-01-31 13:36:22 [WARN] Missing downlevel flags: DownlevelFlags(SURFACE_VIEW_FORMATS)
+The underlying API or device in use does not support enough features to be a fully compliant implementation of WebGPU. A subset of the features can still be used. If you are running this program on native and not in a browser and wish to limit the features you use to the supported subset, call Adapter::downlevel_properties or Device::downlevel_properties to get a listing of the features the current platform supports.
+2025-01-31 13:36:22 [WARN] DownlevelCapabilities {
+    flags: DownlevelFlags(
+        COMPUTE_SHADERS | FRAGMENT_WRITABLE_STORAGE | INDIRECT_EXECUTION | BASE_VERTEX | READ_ONLY_DEPTH_STENCIL | NON_POWER_OF_TWO_MIPMAPPED_TEXTURES | CUBE_ARRAY_TEXTURES | COMPARISON_SAMPLERS | INDEPENDENT_BLEND | VERTEX_STORAGE | ANISOTROPIC_FILTERING | FRAGMENT_STORAGE | MULTISAMPLED_SHADING | DEPTH_TEXTURE_AND_BUFFER_COPIES | WEBGPU_TEXTURE_FORMAT_SUPPORT | BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED | UNRESTRICTED_INDEX_BUFFER | FULL_DRAW_INDEX_UINT32 | DEPTH_BIAS_CLAMP | VIEW_FORMATS | UNRESTRICTED_EXTERNAL_TEXTURE_COPIES | NONBLOCKING_QUERY_RESOLVE | VERTEX_AND_INSTANCE_INDEX_RESPECTS_RESPECTIVE_FIRST_VALUE_IN_INDIRECT_DRAW,
+    ),
+    limits: DownlevelLimits,
+    shader_model: Sm5,
+}
